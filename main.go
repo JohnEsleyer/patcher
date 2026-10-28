@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 type fileState struct {
 	content []byte
@@ -136,14 +136,9 @@ func main() {
 				simErrors = append(simErrors, fmt.Sprintf("Line %d: Cannot replace in %s: file does not exist", act.Line, act.Path))
 				continue
 			}
-			newStr, ok := performReplace(string(st.content), act.Search, act.With)
-			if !ok {
-				hint := findMismatchHint(string(st.content), act.Search)
-				errDesc := fmt.Sprintf("Line %d: ✗ Search target not found in: %s", act.Line, act.Path)
-				if hint != "" {
-					errDesc += fmt.Sprintf("\n     Mismatch hint %s", hint)
-				}
-				simErrors = append(simErrors, errDesc)
+			newStr, err := applyReplace(string(st.content), act)
+			if err != nil {
+				simErrors = append(simErrors, fmt.Sprintf("Line %d: ✗ %v in: %s", act.Line, err, act.Path))
 				continue
 			}
 			st.content = []byte(newStr)
@@ -174,10 +169,22 @@ func main() {
 				fmt.Printf("%s Wrote: %s\n", prefix, act.Path)
 			}
 		case ActionReplace:
+			desc := ""
+			if act.From != "" {
+				desc = fmt.Sprintf(" (from %q to %q)", act.From, act.To)
+			} else if act.Symbol != "" {
+				desc = fmt.Sprintf(" (symbol %q)", act.Symbol)
+			} else if act.Lines != "" {
+				desc = fmt.Sprintf(" (lines %s)", act.Lines)
+			} else if act.After != "" {
+				desc = fmt.Sprintf(" (after %q)", act.After)
+			} else if act.Before != "" {
+				desc = fmt.Sprintf(" (before %q)", act.Before)
+			}
 			if dryRun {
-				fmt.Printf("%s REPLACE in %s\n", prefix, act.Path)
+				fmt.Printf("%s REPLACE in %s%s\n", prefix, act.Path, desc)
 			} else {
-				fmt.Printf("%s Patched: %s\n", prefix, act.Path)
+				fmt.Printf("%s Patched: %s%s\n", prefix, act.Path, desc)
 			}
 		case ActionDelete:
 			if dryRun {

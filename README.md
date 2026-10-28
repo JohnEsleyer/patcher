@@ -1,4 +1,3 @@
-
 # 🩹 patcher
 
 A fast, lightweight, and robust CLI tool built in Go to safely apply multi-file code modifications and patches from LLM / AI assistant outputs directly to your project.
@@ -21,96 +20,132 @@ Any conversational text, explanations, or markdown wrappers outside the directiv
 
 ## 🛡️ Key Features & Safety Guarantees
 
-- **Two-Pass Atomic Validation (VFS):** Validates all operations in an in-memory virtual filesystem before touching disk. If any `<search>` block fails to match or a file is missing, **zero files are touched**.
-- **Sequential In-Memory Execution:** Changes run strictly in document order. You can create a file and run subsequent `<replace>` blocks on it within the same patch file.
-- **Anti-Corruption Tag Shield:** Detects unclosed tags and nested directives immediately, preventing runaway tags from swallowing subsequent edits.
-- **4-Tier Fuzzy Matching for `<search>`:**
+- **No Tag Leakage Guarantee:** Automatically strips accidental nested or duplicated patcher tags from inside replacements and file writes. Directives are **never** accidentally written into user source code.
+- **Targeted Region Updates (No Line Guessing):** LLMs no longer need to guess line numbers or reproduce large blocks of code. Target specific regions with:
+  - Pattern bounds (`from="..." to="..."`)
+  - Function/struct symbols (`symbol="..."`)
+  - Wildcard / ellipsis in search blocks (`...`)
+  - Line numbers (`lines="45-120"`)
+  - Anchor insertions (`after="..."` or `before="..."`)
+- **Automatic Line Number Stripping:** If an LLM copies numbered lines from context tools like `textify` (`   45 | func Foo()`), `patcher` automatically scrubs the line numbers and applies clean source code.
+- **Code Fence Stripping:** Automatically detects and strips accidental outer code block fences (` ```lang ... ``` `) generated inside `<file>` and `<with>` blocks.
+- **Two-Pass Atomic Validation (VFS):** Validates all operations in an in-memory virtual filesystem before touching disk. If any search target or region fails to match, **zero files are touched**.
+- **Sequential In-Memory Execution:** Changes run strictly in document order. You can create a file and run subsequent targeted replacements on it within the same patch file.
+- **5-Tier Fuzzy Matching for Search Blocks:**
   1. *Exact match*
   2. *Line ending normalization* (`\r\n` vs `\n`)
-  3. *Trailing whitespace tolerance* (ignores trailing spaces/tabs on lines)
-  4. *Indentation tolerance* (matches blocks regardless of tab vs. space indentation differences)
-- **Helpful Diagnostics:** If a search target does not match, `patcher` provides a contextual mismatch hint showing the expected line vs. actual content.
-- **Code Fence Stripping:** Automatically detects and strips accidental outer ` ```lang ... ``` ` wrappers generated inside `<file>` blocks.
-- **Pasted Text Normalization:** Automatically fixes smart/curly quotes (`“`, `”`, `‘`, `’`) and decodes HTML entities (`&lt;`, `&gt;`) from rich text.
-- **Automatic Directory Creation:** Creates any missing parent directories on demand when writing files.
-
----
-
-## 🚀 Installation
-
-### Prerequisites
-- Go 1.22+ (or compatible toolchain)
-
-### Build and Install
-
-```bash
-# Clone the repository
-git clone https://github.com/johnesleyer/patcher.git
-cd patcher
-
-# Build binary across all package files
-go build -o patcher .
-
-# Install to your local PATH (Linux / macOS)
-mv patcher ~/.local/bin/
-
-# Or system-wide
-sudo mv patcher /usr/local/bin/
-```
-
-Verify the installation:
-```bash
-patcher --help
-```
+  3. *Trailing whitespace tolerance*
+  4. *Indentation tolerance*
+  5. *Ellipsis / wildcard interpolation* (`...`)
 
 ---
 
 ## 📋 Directive Format Reference
 
-`patcher` scans text for three XML-like tags. Multiple operations can be included in a single file in any order.
+*(Note: In actual patch files, use tags without space after `<`)*
 
-### 1. Write or Overwrite a File: `<file>`
+### 1. Write or Overwrite a File: `< file>`
 
 Creates a new file or completely overwrites an existing file. Missing parent directories are created automatically.
 
 ```xml
-<file path="path/to/file.ext">
+< file path="cmd/app/main.go">
 package main
 
+import "fmt"
+
 func main() {
-    println("Hello, World!")
+    fmt.Println("Hello, World!")
 }
-</file>
+< /file>
 ```
 
 ---
 
-### 2. Targeted Search & Replace: `<replace>`
+### 2. Targeted Region Updates (No Line Guessing!)
 
-Searches for an exact block of code inside an existing file and replaces it.
+#### A. Block Replacement (`from="..." to="..."`)
+Replaces everything from the starting pattern to the stopping pattern:
 
 ```xml
-<replace path="path/to/file.ext">
-<search>
-func OldImplementation() {
-    // legacy logic
+< replace path="pkg/compiler/typechecker.go" from="case *PromoteExpr:" to="case *">
+< with>
+case *PromoteExpr:
+    val := e.Value
+    genPromote(val)
+case *
+< /with>
+< /replace>
+```
+
+#### B. Symbol Replacement (`symbol="..."`)
+Replaces an entire function, method, struct, or class declaration by name:
+
+```xml
+< replace path="pkg/compiler/codegen.go" symbol="inferExpr">
+< with>
+func inferExpr(ctx *Context, expr Expr) Type {
+    return ctx.Resolve(expr)
 }
-</search>
-<with>
-func NewImplementation() {
-    // improved logic
+< /with>
+< /replace>
+```
+
+#### C. Ellipsis / Wildcard Matching (`...`)
+Target modifications inside a large block without reproducing the entire block:
+
+```xml
+< replace path="pkg/config/config.go">
+< search>
+type Config struct {
+    ...
+    Timeout int
+    ...
 }
-</replace>
+< /search>
+< with>
+type Config struct {
+    ...
+    Timeout int
+    Retries int
+    ...
+}
+< /with>
+< /replace>
+```
+
+#### D. Anchor Insertions (`after="..."` or `before="..."`)
+Inserts new code directly before or after an anchor line:
+
+```xml
+< replace path="pkg/api/server.go" after="router := gin.Default()">
+< with>
+    router.Use(cors.Default())
+< /with>
+< /replace>
+```
+
+#### E. Explicit Line Ranges (`lines="..."`)
+When line numbers are known (e.g. from `textify signatures`):
+
+```xml
+< replace path="pkg/utils/math.go" lines="45-60">
+< with>
+func Add(a, b int) int {
+    return a + b
+}
+< /with>
+< /replace>
 ```
 
 ---
 
-### 3. Delete a File: `<delete />`
+### 3. Delete a File: `< delete />`
 
-Deletes a file if it exists.
+Deletes a file if it exists:
 
 ```xml
-<delete path="path/to/unneeded_file.go" />
+< delete path="path/to/obsolete_file.go" />
 ```
 
 ---
@@ -151,5 +186,4 @@ Options:
 
 ## 📄 License
 
-MIT License.
-
+Distributed under the MIT License.
