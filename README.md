@@ -18,15 +18,53 @@ Any conversational text, explanations, or markdown wrappers outside the directiv
 
 ---
 
+## ⚠️ Critical Rules for AI Assistants & Prompt Engineers
+
+To ensure patches apply cleanly on the first pass without syntax or validation errors:
+
+### 1. 🚫 NEVER put `>` or `<` inside XML attributes (`from`, `to`, `after`, `before`)
+XML parsers interpret `>` as the closing bracket of the `<replace>` tag!
+- **BROKEN:** `<replace path="file.go" from="if x > 0 {" to="}">`
+  *(The `>` in `x > 0` closes the tag prematurely, causing `missing <search> block` errors).*
+- **CORRECT:** Use an explicit `<search>` block whenever patterns contain comparisons, generics, or arrows:
+  ```xml
+  <replace path="file.go">
+  <search>
+  if x > 0 {
+      ...
+  }
+  </search>
+  <with>
+  if x >= 0 {
+      ...
+  }
+  </with>
+  </replace>
+  ```
+
+### 2. 🎯 Prefer `symbol="..."` over multiple partial replacements in the same function
+When updating or extending a function, method, struct, or test case:
+- **AVOID:** Splitting edits across multiple partial search blocks in the same function (e.g. one for the start, one for the return statement). If any anchor shifts, the entire patch fails atomic validation.
+- **PREFERRED:** Replace the whole declaration by name with `symbol="FunctionName"`.
+
+### 3. 🧩 Use Ellipsis (`...`) for Large Blocks
+Avoid copy-pasting dozens of unchanged lines. Use `...` wildcards in `<search>` blocks to match leading and trailing boilerplate while pinning only the exact lines being modified.
+
+### 4. 📐 Every `<replace>` MUST have a target
+A `<replace path="...">` without `symbol`, `from/to`, `after`, `before`, `lines`, or a `<search>` child block will be rejected immediately before any files are modified.
+
+---
+
 ## 🛡️ Key Features & Safety Guarantees
 
 - **No Tag Leakage Guarantee:** Automatically strips accidental nested or duplicated patcher tags from inside replacements and file writes. Directives are **never** accidentally written into user source code.
-- **Targeted Region Updates (No Line Guessing):** LLMs no longer need to guess line numbers or reproduce large blocks of code. Target specific regions with:
-  - Pattern bounds (`from="..." to="..."`)
+- **Targeted Region Updates (No Line Guessing):** Target specific regions cleanly with:
   - Function/struct symbols (`symbol="..."`)
+  - Explicit search blocks (`<search> ... </search>`)
   - Wildcard / ellipsis in search blocks (`...`)
-  - Line numbers (`lines="45-120"`)
+  - Pattern bounds (`from="..." to="..."`)
   - Anchor insertions (`after="..."` or `before="..."`)
+  - Line numbers (`lines="45-120"`)
 - **Automatic Line Number Stripping:** If an LLM copies numbered lines from context tools like `textify` (`   45 | func Foo()`), `patcher` automatically scrubs the line numbers and applies clean source code.
 - **Code Fence Stripping:** Automatically detects and strips accidental outer code block fences (` ```lang ... ``` `) generated inside `<file>` and `<with>` blocks.
 - **Two-Pass Atomic Validation (VFS):** Validates all operations in an in-memory virtual filesystem before touching disk. If any search target or region fails to match, **zero files are touched**.
@@ -44,12 +82,12 @@ Any conversational text, explanations, or markdown wrappers outside the directiv
 
 *(Note: In actual patch files, use tags without space after `<`)*
 
-### 1. Write or Overwrite a File: `< file>`
+### 1. Write or Overwrite a File: `<file>`
 
 Creates a new file or completely overwrites an existing file. Missing parent directories are created automatically.
 
 ```xml
-< file path="cmd/app/main.go">
+<file path="cmd/app/main.go">
 package main
 
 import "fmt"
@@ -57,95 +95,95 @@ import "fmt"
 func main() {
     fmt.Println("Hello, World!")
 }
-< /file>
+</file>
 ```
 
 ---
 
-### 2. Targeted Region Updates (No Line Guessing!)
+### 2. Targeted Region Updates
 
-#### A. Block Replacement (`from="..." to="..."`)
-Replaces everything from the starting pattern to the stopping pattern:
-
-```xml
-< replace path="pkg/compiler/typechecker.go" from="case *PromoteExpr:" to="case *">
-< with>
-case *PromoteExpr:
-    val := e.Value
-    genPromote(val)
-case *
-< /with>
-< /replace>
-```
-
-#### B. Symbol Replacement (`symbol="..."`)
+#### A. Symbol Replacement (`symbol="..."`) — *Recommended for functions & structs*
 Replaces an entire function, method, struct, or class declaration by name:
 
 ```xml
-< replace path="pkg/compiler/codegen.go" symbol="inferExpr">
-< with>
+<replace path="pkg/compiler/codegen.go" symbol="inferExpr">
+<with>
 func inferExpr(ctx *Context, expr Expr) Type {
     return ctx.Resolve(expr)
 }
-< /with>
-< /replace>
+</with>
+</replace>
 ```
 
-#### C. Ellipsis / Wildcard Matching (`...`)
+#### B. Search Block with Wildcard / Ellipsis (`...`) — *Recommended for targeted edits*
 Target modifications inside a large block without reproducing the entire block:
 
 ```xml
-< replace path="pkg/config/config.go">
-< search>
+<replace path="pkg/config/config.go">
+<search>
 type Config struct {
     ...
     Timeout int
     ...
 }
-< /search>
-< with>
+</search>
+<with>
 type Config struct {
     ...
     Timeout int
     Retries int
     ...
 }
-< /with>
-< /replace>
+</with>
+</replace>
+```
+
+#### C. Block Replacement (`from="..." to="..."`)
+Replaces everything from the starting pattern to the stopping pattern *(ensure patterns contain no `<` or `>`)*:
+
+```xml
+<replace path="pkg/compiler/typechecker.go" from="case *PromoteExpr:" to="case *">
+<with>
+case *PromoteExpr:
+    val := e.Value
+    genPromote(val)
+case *
+</with>
+</replace>
 ```
 
 #### D. Anchor Insertions (`after="..."` or `before="..."`)
 Inserts new code directly before or after an anchor line:
 
 ```xml
-< replace path="pkg/api/server.go" after="router := gin.Default()">
-< with>
+<replace path="pkg/api/server.go" after="router := gin.Default()">
+<with>
     router.Use(cors.Default())
-< /with>
-< /replace>
+</with>
+</replace>
 ```
 
 #### E. Explicit Line Ranges (`lines="..."`)
-When line numbers are known (e.g. from `textify signatures`):
+When line numbers are known:
 
 ```xml
-< replace path="pkg/utils/math.go" lines="45-60">
-< with>
+<replace path="pkg/utils/math.go" lines="45-60">
+<with>
 func Add(a, b int) int {
     return a + b
 }
-< /with>
-< /replace>
+</with>
+</replace>
 ```
 
 ---
 
-### 3. Delete a File: `< delete />`
+### 3. Delete a File: `<delete />`
 
 Deletes a file if it exists:
 
 ```xml
-< delete path="path/to/obsolete_file.go" />
+<delete path="path/to/obsolete_file.go" />
 ```
 
 ---
