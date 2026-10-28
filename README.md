@@ -91,8 +91,6 @@ Use this for targeted edits inside existing files. It requires two sub-tags:
 </replace>
 ```
 
-<<<<<<< HEAD
-=======
 #### Rules for `<search>`:
 - Must match the target file character-for-character, including indentation (tabs/spaces) and line breaks.
 - If multiple identical blocks exist, only the first occurrence is replaced.
@@ -117,7 +115,6 @@ Use this for targeted edits inside existing files. It requires two sub-tags:
 </replace>
 ```
 
->>>>>>> refs/remotes/origin/main
 ---
 
 ### 3. Delete a File: `<delete />`
@@ -143,7 +140,6 @@ Use this self-closing tag to delete a file if it exists.
    cat << 'EOF' > patch.txt
    Here is the code:
 
-<<<<<<< HEAD
 ```bash
 cat << 'EOF' > patch.txt
 Here are the changes:
@@ -205,4 +201,4 @@ rm patch.txt
 - **Smart Quote Normalization:** Automatically converts curly/smart quotes (`“`, `”`, `‘`, `’`) introduced by some text editors into standard ASCII quotes.
 - **HTML Entity Decoding:** Automatically decodes `&lt;` and `&gt;` if code was copied from rich-text browser views.
 - **Line Ending Tolerance:** Normalizes `\r\n` (Windows CRLF) and `\n` (Unix LF) automatically.
->>>>>>> refs/remotes/origin/main
+
