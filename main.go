@@ -27,11 +27,11 @@ type Action struct {
 }
 
 var (
-	pathAttrRegex = regexp.MustCompile(`(?i)\bpath\s*=\s*["'“]([^"'”]+)["'”]`)
-	tagStartRegex = regexp.MustCompile(`(?i)<(file|replace|delete)\b`)
-	searchRegex   = regexp.MustCompile(`(?s)<search\s*>(.*?)</search\s*>`)
-	withRegex     = regexp.MustCompile(`(?s)<with\s*>(.*?)</with\s*>`)
-	nestedTagRe   = regexp.MustCompile(`(?i)<(file|replace|delete)\b[\s\S]*?\bpath\s*=`)
+	pathAttrRegex     = regexp.MustCompile(`(?i)\bpath\s*=\s*["'“]([^"'”]+)["'”]`)
+	tagStartRegex     = regexp.MustCompile(`(?i)<(file|replace|delete)\b`)
+	searchRegex       = regexp.MustCompile(`(?s)<search\s*>(.*?)</search\s*>`)
+	withRegex         = regexp.MustCompile(`(?s)<with\s*>(.*?)</with\s*>`)
+	topLevelDirective = regexp.MustCompile(`(?m)^<(file|replace|delete)\b[^>]*\bpath\s*=`)
 )
 
 func cleanContent(s string) string {
@@ -45,12 +45,18 @@ func cleanContent(s string) string {
 	return s
 }
 
-func stripFirstNewline(s string) string {
+// trimTagNewlines strips a single leading newline after <tag> and trailing newline before </tag>
+func trimTagNewlines(s string) string {
 	if strings.HasPrefix(s, "\r\n") {
-		return s[2:]
+		s = s[2:]
+	} else if strings.HasPrefix(s, "\n") {
+		s = s[1:]
 	}
-	if strings.HasPrefix(s, "\n") {
-		return s[1:]
+
+	if strings.HasSuffix(s, "\r\n") {
+		s = s[:len(s)-2]
+	} else if strings.HasSuffix(s, "\n") {
+		s = s[:len(s)-1]
 	}
 	return s
 }
@@ -120,9 +126,12 @@ func parsePatch(content string) ([]Action, []string) {
 		openTagEnd += startIdx + 1
 		header := content[startIdx:openTagEnd]
 
+		// Ignore self-closing <file ... /> or <replace ... /> used in markdown/chat examples
+		trimmedHeader := strings.TrimSpace(header)
+		isSelfClosing := strings.HasSuffix(trimmedHeader, "/>")
+
 		pathMatch := pathAttrRegex.FindStringSubmatch(header)
 		if len(pathMatch) < 2 {
-			errs = append(errs, fmt.Sprintf("Line %d: Tag missing 'path' attribute: %s", lineNo, strings.TrimSpace(header)))
 			pos = openTagEnd
 			continue
 		}
@@ -138,29 +147,31 @@ func parsePatch(content string) ([]Action, []string) {
 			pos = openTagEnd
 
 		case strings.HasPrefix(strings.ToLower(header), "<file"):
-			closeIdx := strings.Index(content[openTagEnd:], "</file>")
-			if closeIdx == -1 {
-				// Try case-insensitive close tag
-				closeRe := regexp.MustCompile(`(?i)</file\s*>`)
-				m := closeRe.FindStringIndex(content[openTagEnd:])
-				if m == nil {
-					errs = append(errs, fmt.Sprintf("Line %d: Unclosed <file path=\"%s\"> (no matching </file> found)", lineNo, targetPath))
-					pos = openTagEnd
-					continue
-				}
-				closeIdx = m[0]
-			}
-
-			body := content[openTagEnd : openTagEnd+closeIdx]
-
-			// Anti-corruption check: Ensure no unclosed tag nested another directive inside the file body
-			if nestedTagRe.MatchString(body) {
-				errs = append(errs, fmt.Sprintf("Line %d: Corrupted patch! <file path=\"%s\"> contains nested patch directives before </file>. Unclosed tag detected.", lineNo, targetPath))
-				pos = openTagEnd + closeIdx + 7
+			if isSelfClosing {
+				// Inline chat reference like `<file path="..." />` — ignore safely
+				pos = openTagEnd
 				continue
 			}
 
-			body = stripFirstNewline(body)
+			closeRe := regexp.MustCompile(`(?i)</file\s*>`)
+			m := closeRe.FindStringIndex(content[openTagEnd:])
+			if m == nil {
+				errs = append(errs, fmt.Sprintf("Line %d: Unclosed <file path=\"%s\"> (no matching </file> found)", lineNo, targetPath))
+				pos = openTagEnd
+				continue
+			}
+
+			closeIdx := m[0]
+			body := content[openTagEnd : openTagEnd+closeIdx]
+
+			// Anti-corruption: only flag if a top-level unindented patch directive was swallowed
+			if topLevelDirective.MatchString(body) {
+				errs = append(errs, fmt.Sprintf("Line %d: Corrupted patch! <file path=\"%s\"> appears to swallow another top-level directive before </file>.", lineNo, targetPath))
+				pos = openTagEnd + m[1]
+				continue
+			}
+
+			body = trimTagNewlines(body)
 			body = stripCodeFences(body)
 
 			actions = append(actions, Action{
@@ -169,9 +180,14 @@ func parsePatch(content string) ([]Action, []string) {
 				Body: body,
 				Line: lineNo,
 			})
-			pos = openTagEnd + closeIdx + 7
+			pos = openTagEnd + m[1]
 
 		case strings.HasPrefix(strings.ToLower(header), "<replace"):
+			if isSelfClosing {
+				pos = openTagEnd
+				continue
+			}
+
 			closeRe := regexp.MustCompile(`(?i)</replace\s*>`)
 			m := closeRe.FindStringIndex(content[openTagEnd:])
 			if m == nil {
@@ -179,20 +195,19 @@ func parsePatch(content string) ([]Action, []string) {
 				pos = openTagEnd
 				continue
 			}
-			closeIdx := m[0]
-			inner := content[openTagEnd : openTagEnd+closeIdx]
 
-			if nestedTagRe.MatchString(inner) {
-				errs = append(errs, fmt.Sprintf("Line %d: Corrupted patch! <replace path=\"%s\"> contains nested patch directives before </replace>.", lineNo, targetPath))
-				pos = openTagEnd + m[1]
-				continue
-			}
+			inner := content[openTagEnd : openTagEnd+m[0]]
 
 			searchMatch := searchRegex.FindStringSubmatch(inner)
 			withMatch := withRegex.FindStringSubmatch(inner)
 
 			if len(searchMatch) < 2 {
-				errs = append(errs, fmt.Sprintf("Line %d: <replace path=\"%s\"> is missing <search> block", lineNo, targetPath))
+				// Only flag if corrupted by an unclosed directive
+				if topLevelDirective.MatchString(inner) {
+					errs = append(errs, fmt.Sprintf("Line %d: Corrupted patch! Unclosed directive detected inside <replace path=\"%s\">", lineNo, targetPath))
+				} else {
+					errs = append(errs, fmt.Sprintf("Line %d: <replace path=\"%s\"> is missing <search> block", lineNo, targetPath))
+				}
 				pos = openTagEnd + m[1]
 				continue
 			}
@@ -202,8 +217,8 @@ func parsePatch(content string) ([]Action, []string) {
 				continue
 			}
 
-			searchStr := stripFirstNewline(searchMatch[1])
-			withStr := stripFirstNewline(withMatch[1])
+			searchStr := trimTagNewlines(searchMatch[1])
+			withStr := trimTagNewlines(withMatch[1])
 
 			actions = append(actions, Action{
 				Type:   ActionReplace,
@@ -245,7 +260,6 @@ func performReplace(origStr, search, with string) (string, bool) {
 
 	if len(searchLines) <= len(origLines) {
 		matchIdx := -1
-		matchCount := 0
 		for i := 0; i <= len(origLines)-len(searchLines); i++ {
 			matched := true
 			for j := 0; j < len(searchLines); j++ {
@@ -254,14 +268,12 @@ func performReplace(origStr, search, with string) (string, bool) {
 					break
 				}
 			}
-			if matched {
-				matchCount++
-				if matchIdx == -1 {
-					matchIdx = i
-				}
+			if matched && matchIdx == -1 {
+				matchIdx = i
+				break
 			}
 		}
-		if matchCount == 1 {
+		if matchIdx != -1 {
 			withLines := strings.Split(normalizedWith, "\n")
 			newLines := make([]string, 0, len(origLines)-len(searchLines)+len(withLines))
 			newLines = append(newLines, origLines[:matchIdx]...)
@@ -275,10 +287,9 @@ func performReplace(origStr, search, with string) (string, bool) {
 		}
 	}
 
-	// Tier 4: Indentation tolerance (unique TrimSpace block matching)
+	// Tier 4: Indentation tolerance (TrimSpace block matching)
 	if len(searchLines) <= len(origLines) {
 		matchIdx := -1
-		matchCount := 0
 		for i := 0; i <= len(origLines)-len(searchLines); i++ {
 			matched := true
 			for j := 0; j < len(searchLines); j++ {
@@ -287,14 +298,12 @@ func performReplace(origStr, search, with string) (string, bool) {
 					break
 				}
 			}
-			if matched {
-				matchCount++
-				if matchIdx == -1 {
-					matchIdx = i
-				}
+			if matched && matchIdx == -1 {
+				matchIdx = i
+				break
 			}
 		}
-		if matchCount == 1 {
+		if matchIdx != -1 {
 			withLines := strings.Split(normalizedWith, "\n")
 			newLines := make([]string, 0, len(origLines)-len(searchLines)+len(withLines))
 			newLines = append(newLines, origLines[:matchIdx]...)
@@ -309,6 +318,33 @@ func performReplace(origStr, search, with string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// findMismatchHint inspects where a search target almost matched to give actionable diagnostics
+func findMismatchHint(origStr, search string) string {
+	searchLines := strings.Split(strings.ReplaceAll(search, "\r\n", "\n"), "\n")
+	if len(searchLines) == 0 {
+		return ""
+	}
+	origLines := strings.Split(strings.ReplaceAll(origStr, "\r\n", "\n"), "\n")
+
+	firstSearch := strings.TrimSpace(searchLines[0])
+	if firstSearch == "" {
+		return ""
+	}
+
+	for i, oLine := range origLines {
+		if strings.TrimSpace(oLine) == firstSearch {
+			for j := 1; j < len(searchLines) && i+j < len(origLines); j++ {
+				s := strings.TrimRight(searchLines[j], " \t\r")
+				f := strings.TrimRight(origLines[i+j], " \t\r")
+				if s != f {
+					return fmt.Sprintf("near target line %d:\n       Search: %q\n       Actual: %q", i+j+1, searchLines[j], origLines[i+j])
+				}
+			}
+		}
+	}
+	return ""
 }
 
 type fileState struct {
@@ -435,7 +471,12 @@ func main() {
 			}
 			newStr, ok := performReplace(string(st.content), act.Search, act.With)
 			if !ok {
-				simErrors = append(simErrors, fmt.Sprintf("Line %d: ✗ Search target not found in: %s", act.Line, act.Path))
+				hint := findMismatchHint(string(st.content), act.Search)
+				errDesc := fmt.Sprintf("Line %d: ✗ Search target not found in: %s", act.Line, act.Path)
+				if hint != "" {
+					errDesc += fmt.Sprintf("\n     Mismatch hint %s", hint)
+				}
+				simErrors = append(simErrors, errDesc)
 				continue
 			}
 			st.content = []byte(newStr)
