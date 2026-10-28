@@ -16,15 +16,32 @@ type fileState struct {
 }
 
 func printUsage() {
-	fmt.Println("Usage: patcher <patch-file.txt> [--dry-run]")
-	fmt.Println("       patcher --version")
-	fmt.Println("Options:")
-	fmt.Println("  --dry-run, -n    Preview changes without writing to disk")
-	fmt.Println("  --version, -v    Show version information")
-	fmt.Println("  --help, -h       Show this help message")
+	fmt.Println("Usage:")
+	fmt.Println("  patcher <patch-file.txt> [--dry-run]   Apply patch file")
+	fmt.Println("  patcher version                        Show installed version")
+	fmt.Println("  patcher help                           Show this help message")
+	fmt.Println("\nOptions:")
+	fmt.Println("  --dry-run, -n                          Preview changes without writing to disk")
+	fmt.Println("  --version, -v                          Show version information")
+	fmt.Println("  --help, -h                             Show this help message")
 }
 
 func main() {
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
+
+	// First-class subcommands & version checks
+	switch os.Args[1] {
+	case "version", "--version", "-v", "-version":
+		fmt.Printf("patcher v%s\n", version)
+		os.Exit(0)
+	case "help", "--help", "-h":
+		printUsage()
+		os.Exit(0)
+	}
+
 	var patchFile string
 	var dryRun bool
 

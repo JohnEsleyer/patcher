@@ -7,40 +7,31 @@ import (
 	"strings"
 )
 
-// applyReplace executes targeted pattern replacement, symbol replacement, line-range replacement,
-// ellipsis wildcard replacement, or 4-tier fuzzy matching.
 func applyReplace(origStr string, act Action) (string, error) {
-	// 1. Explicit line range replacement: lines="50-120"
 	if act.Lines != "" {
 		return replaceLines(origStr, act.Lines, act.With)
 	}
 
-	// 2. Symbol extraction replacement: symbol="MyFunction"
 	if act.Symbol != "" {
 		return replaceSymbol(origStr, act.Symbol, act.With)
 	}
 
-	// 3. Pattern-bounded replacement: from="start_pattern" to="end_pattern"
 	if act.From != "" {
 		return replaceFromTo(origStr, act.From, act.To, act.With)
 	}
 
-	// 4. Anchor insertion after match: after="pattern"
 	if act.After != "" {
 		return insertAfter(origStr, act.After, act.With)
 	}
 
-	// 5. Anchor insertion before match: before="pattern"
 	if act.Before != "" {
 		return insertBefore(origStr, act.Before, act.With)
 	}
 
-	// 6. Ellipsis / wildcard matching inside <search>: "..."
 	if hasEllipsis(act.Search) {
 		return replaceWithEllipsis(origStr, act.Search, act.With)
 	}
 
-	// 7. Standard 4-tier fuzzy match
 	newStr, ok := performReplace(origStr, act.Search, act.With)
 	if !ok {
 		hint := findMismatchHint(origStr, act.Search)
@@ -53,14 +44,11 @@ func applyReplace(origStr string, act Action) (string, error) {
 	return newStr, nil
 }
 
-// performReplace uses a 4-tier fuzzy match: exact, CRLF-normalized, line-trimmed, and indentation-tolerant
 func performReplace(origStr, search, with string) (string, bool) {
-	// Tier 1: Exact match
 	if strings.Contains(origStr, search) {
 		return strings.Replace(origStr, search, with, 1), true
 	}
 
-	// Tier 2: CRLF / LF line ending normalization
 	normalizedOrig := strings.ReplaceAll(origStr, "\r\n", "\n")
 	normalizedSearch := strings.ReplaceAll(search, "\r\n", "\n")
 	normalizedWith := strings.ReplaceAll(with, "\r\n", "\n")
@@ -73,7 +61,6 @@ func performReplace(origStr, search, with string) (string, bool) {
 		return res, true
 	}
 
-	// Tier 3: Trailing whitespace tolerance on lines
 	origLines := strings.Split(normalizedOrig, "\n")
 	searchLines := strings.Split(normalizedSearch, "\n")
 
@@ -106,7 +93,6 @@ func performReplace(origStr, search, with string) (string, bool) {
 		}
 	}
 
-	// Tier 4: Indentation tolerance (TrimSpace block matching)
 	if len(searchLines) <= len(origLines) {
 		matchIdx := -1
 		for i := 0; i <= len(origLines)-len(searchLines); i++ {
@@ -288,7 +274,6 @@ func replaceSymbol(origStr, symbol, with string) (string, error) {
 			startIdx = idx
 			endIdx = idx
 
-			// Python-style indentation
 			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") {
 				baseIndent := len(line) - len(strings.TrimLeft(line, " \t"))
 				for j := idx + 1; j < len(origLines); j++ {
@@ -306,7 +291,6 @@ func replaceSymbol(origStr, symbol, with string) (string, error) {
 				break
 			}
 
-			// Brace-style languages
 			braceCount := 0
 			foundBrace := false
 			for j := idx; j < len(origLines); j++ {
@@ -432,7 +416,6 @@ func replaceWithEllipsis(origStr, search, with string) (string, error) {
 	origLines := strings.Split(strings.ReplaceAll(origStr, "\r\n", "\n"), "\n")
 	searchLines := strings.Split(strings.ReplaceAll(search, "\r\n", "\n"), "\n")
 
-	// Split search into non-ellipsis block segments
 	var segments [][]string
 	var currSegment []string
 	for _, l := range searchLines {
@@ -478,7 +461,6 @@ func replaceWithEllipsis(origStr, search, with string) (string, error) {
 		cursor = found + len(seg)
 	}
 
-	// Capture wildcard text between matched segments
 	var capturedBlocks []string
 	for i := 0; i < len(segmentSpans)-1; i++ {
 		start := segmentSpans[i][1]
@@ -487,7 +469,6 @@ func replaceWithEllipsis(origStr, search, with string) (string, error) {
 		capturedBlocks = append(capturedBlocks, captured)
 	}
 
-	// If with contains ellipsis, interpolate the captured blocks
 	withLines := strings.Split(strings.ReplaceAll(with, "\r\n", "\n"), "\n")
 	var finalWithLines []string
 	captIdx := 0
@@ -522,7 +503,6 @@ func replaceWithEllipsis(origStr, search, with string) (string, error) {
 	return res, nil
 }
 
-// findMismatchHint inspects where a search target almost matched to give actionable diagnostics
 func findMismatchHint(origStr, search string) string {
 	searchLines := strings.Split(strings.ReplaceAll(search, "\r\n", "\n"), "\n")
 	if len(searchLines) == 0 {

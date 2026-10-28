@@ -173,13 +173,15 @@ Deletes a file if it exists:
 ## 📖 CLI Usage & Options
 
 ```text
-Usage: patcher <patch-file.txt> [--dry-run]
-       patcher --version
+Usage:
+  patcher <patch-file.txt> [--dry-run]   Apply patch file
+  patcher version                        Show installed version
+  patcher help                           Show this help message
 
 Options:
-  --dry-run, -n    Preview changes without writing to disk
-  --version, -v    Show version information
-  --help, -h       Show this help message
+  --dry-run, -n                          Preview changes without writing to disk
+  --version, -v                          Show version information
+  --help, -h                             Show this help message
 ```
 
 ---
