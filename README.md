@@ -102,15 +102,34 @@ func main() {
 
 ### 2. Targeted Region Updates
 
-#### A. Symbol Replacement (`symbol="..."`) — *Recommended for functions & structs*
-Replaces an entire function, method, struct, or class declaration by name:
+#### A. Symbol Replacement (`symbol="..."` / `func="..."` / `struct="..."`) — *AST-Powered*
+Replaces an entire function, method, struct, class, or interface declaration by name using **AST syntax parsing** for Go and TypeScript/JavaScript:
 
 ```xml
+<!-- Replace function or struct -->
 <replace path="pkg/compiler/codegen.go" symbol="inferExpr">
 <with>
 func inferExpr(ctx *Context, expr Expr) Type {
     return ctx.Resolve(expr)
 }
+</with>
+</replace>
+
+<!-- Disambiguate receiver methods in Go -->
+<replace path="pkg/server/server.go" symbol="Server.Start">
+<with>
+func (s *Server) Start() error {
+    return s.listener.Accept()
+}
+</with>
+</replace>
+
+<!-- TypeScript / JavaScript methods and classes -->
+<replace path="src/services/user.ts" symbol="UserService.getUser">
+<with>
+    async getUser(id: string): Promise<User> {
+        return this.repo.findById(id);
+    }
 </with>
 </replace>
 ```

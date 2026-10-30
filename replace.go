@@ -13,7 +13,7 @@ func applyReplace(origStr string, act Action) (string, error) {
 	}
 
 	if act.Symbol != "" {
-		return replaceSymbol(origStr, act.Symbol, act.With)
+		return replaceSymbol(origStr, act.Path, act.Symbol, act.With)
 	}
 
 	if act.From != "" {
@@ -126,7 +126,6 @@ func performReplace(origStr, search, with string) (string, bool) {
 }
 
 func replaceLines(origStr, linesSpec, with string) (string, error) {
-	isCRLF := strings.Contains(origStr, "\r\n")
 	origLines := strings.Split(strings.ReplaceAll(origStr, "\r\n", "\n"), "\n")
 	totalLines := len(origLines)
 
@@ -154,30 +153,7 @@ func replaceLines(origStr, linesSpec, with string) (string, error) {
 		}
 	}
 
-	if startLine < 1 {
-		startLine = 1
-	}
-	if endLine > totalLines {
-		endLine = totalLines
-	}
-	if startLine > totalLines || startLine > endLine {
-		return "", fmt.Errorf("line range %s is outside file bounds (total lines: %d)", linesSpec, totalLines)
-	}
-
-	withLines := strings.Split(strings.ReplaceAll(with, "\r\n", "\n"), "\n")
-
-	newLines := make([]string, 0, (startLine-1)+len(withLines)+(totalLines-endLine))
-	newLines = append(newLines, origLines[:startLine-1]...)
-	newLines = append(newLines, withLines...)
-	if endLine < totalLines {
-		newLines = append(newLines, origLines[endLine:]...)
-	}
-
-	res := strings.Join(newLines, "\n")
-	if isCRLF {
-		res = strings.ReplaceAll(res, "\n", "\r\n")
-	}
-	return res, nil
+	return replaceLineSpan(origStr, startLine, endLine, with)
 }
 
 func replaceFromTo(origStr, fromPat, toPat, with string) (string, error) {
@@ -227,97 +203,6 @@ func replaceFromTo(origStr, fromPat, toPat, with string) (string, error) {
 		if endIdx == -1 {
 			return "", fmt.Errorf("end pattern %q not found after line %d", toPat, startIdx+1)
 		}
-	}
-
-	withLines := strings.Split(strings.ReplaceAll(with, "\r\n", "\n"), "\n")
-	newLines := make([]string, 0, startIdx+len(withLines)+(len(origLines)-(endIdx+1)))
-	newLines = append(newLines, origLines[:startIdx]...)
-	newLines = append(newLines, withLines...)
-	if endIdx+1 < len(origLines) {
-		newLines = append(newLines, origLines[endIdx+1:]...)
-	}
-
-	res := strings.Join(newLines, "\n")
-	if isCRLF {
-		res = strings.ReplaceAll(res, "\n", "\r\n")
-	}
-	return res, nil
-}
-
-func replaceSymbol(origStr, symbol, with string) (string, error) {
-	isCRLF := strings.Contains(origStr, "\r\n")
-	origLines := strings.Split(strings.ReplaceAll(origStr, "\r\n", "\n"), "\n")
-
-	prefixes := []string{
-		"func ", "fn ", "pub fn ", "type ", "struct ", "interface ",
-		"class ", "def ", "trait ", "enum ", "export function ", "export class ",
-		"export default function ", "export const ", "const ", "var ", "let ",
-	}
-
-	startIdx := -1
-	endIdx := -1
-
-	for idx, line := range origLines {
-		trimmed := strings.TrimSpace(line)
-		isDecl := false
-		for _, pfx := range prefixes {
-			if strings.HasPrefix(trimmed, pfx) {
-				isDecl = true
-				break
-			}
-		}
-		if !isDecl {
-			continue
-		}
-
-		if strings.Contains(trimmed, symbol) {
-			startIdx = idx
-			endIdx = idx
-
-			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") {
-				baseIndent := len(line) - len(strings.TrimLeft(line, " \t"))
-				for j := idx + 1; j < len(origLines); j++ {
-					lTrim := strings.TrimSpace(origLines[j])
-					if lTrim == "" {
-						continue
-					}
-					indent := len(origLines[j]) - len(strings.TrimLeft(origLines[j], " \t"))
-					if indent > baseIndent {
-						endIdx = j
-					} else {
-						break
-					}
-				}
-				break
-			}
-
-			braceCount := 0
-			foundBrace := false
-			for j := idx; j < len(origLines); j++ {
-				l := origLines[j]
-				for _, ch := range l {
-					if ch == '{' {
-						braceCount++
-						foundBrace = true
-					} else if ch == '}' {
-						braceCount--
-					}
-				}
-				if foundBrace && braceCount <= 0 {
-					endIdx = j
-					break
-				}
-				if !foundBrace && strings.HasSuffix(strings.TrimSpace(l), ";") {
-					endIdx = j
-					break
-				}
-			}
-			break
-		}
-	}
-
-	if startIdx == -1 {
-		return "", fmt.Errorf("symbol %q declaration not found", symbol)
 	}
 
 	withLines := strings.Split(strings.ReplaceAll(with, "\r\n", "\n"), "\n")

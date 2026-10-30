@@ -11,7 +11,7 @@ var (
 	pathAttrRegex   = regexp.MustCompile(`(?i)\b(?:path|file|src)\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
 	fromAttrRegex   = regexp.MustCompile(`(?i)\bfrom\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
 	toAttrRegex     = regexp.MustCompile(`(?i)\bto\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
-	symbolAttrRegex = regexp.MustCompile(`(?i)\bsymbols?\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
+	symbolAttrRegex = regexp.MustCompile(`(?i)\b(?:symbols?|def|func|struct|method)\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
 	linesAttrRegex  = regexp.MustCompile(`(?i)\blines\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
 	afterAttrRegex  = regexp.MustCompile(`(?i)\bafter\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
 	beforeAttrRegex = regexp.MustCompile(`(?i)\bbefore\s*=\s*["'\x{201c}\x{2018}]([^"'""\x{201d}\x{2019}\r\n>]+)["'\x{201d}\x{2019}]`)
